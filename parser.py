@@ -1,8 +1,10 @@
 import os
 import time
 import random
+from datetime import datetime
 from enum import Enum
 from dotenv import load_dotenv
+import pandas as pd
 from curl_cffi import requests
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, ConfigDict
@@ -110,6 +112,65 @@ def enrich_with_ai(raw_dict: dict) -> dict | None:
     return None
 
 
+def save_to_csv(books_data: list[dict], filename: str = "books_dataset.csv") -> bool:
+    if not books_data:
+        print("[WARNING] Сохранение отменено: передан пустой список данных.")
+        return False
+
+    #Валидация и фильтрация входных данных
+    valid_books = [b for b in books_data if isinstance(b, dict) and b]
+    skipped_count = len(books_data) - len(valid_books)
+    if skipped_count > 0:
+        print(f"[INFO] Отфильтровано невалидных элементов: {skipped_count}")
+
+    if not valid_books:
+        print("[WARNING] Сохранение отменено: список не содержит валидных словарей.")
+        return False
+
+    #Определение пути: первый запуск -> filename, повторный -> filename_YYYYMMDD_HHMMSS.ext
+    target_path = filename
+    if os.path.exists(target_path):
+        base, ext = os.path.splitext(filename)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        target_path = f"{base}_{timestamp}{ext}"
+
+        # Защита на случай нескольких запусков в течение одной секунды
+        counter = 1
+        while os.path.exists(target_path):
+            target_path = f"{base}_{timestamp}_{counter}{ext}"
+            counter += 1
+
+        print(f"[INFO] Файл '{filename}' уже существует. Предыдущая выгрузка не тронута.")
+        print(f"[INFO] Для текущих данных создан новый файл: '{target_path}'")
+
+    #Создание директории и экспорт DataFrame
+    try:
+        dirname = os.path.dirname(target_path)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
+
+        df = pd.DataFrame(valid_books)
+        df.to_csv(target_path, index=False, encoding="utf-8-sig")
+
+        abs_path = os.path.abspath(target_path)
+        print(f"[SUCCESS] Успешно сохранено строк: {len(df)}")
+        print(f"Путь к файлу: {abs_path}")
+        return True
+
+    except PermissionError:
+        print(f"[ERROR] Доступ запрещен к '{target_path}'. Возможно, файл открыт в Excel или нет прав на запись.")
+        return False
+    except OSError as e:
+        print(f"[ERROR] Ошибка файловой системы при сохранении в '{target_path}': {e}")
+        return False
+    except (ValueError, TypeError) as e:
+        print(f"[ERROR] Ошибка структуры данных при конвертации в DataFrame: {e}")
+        return False
+    except Exception as e:
+        print(f"[ERROR] Непредвиденная ошибка при сохранении '{target_path}': {e}")
+        return False
+
+
 if __name__ == "__main__":
     TEST_URL = "https://books.toscrape.com/"
 
@@ -125,10 +186,18 @@ if __name__ == "__main__":
         test_sample = raw_books[:2]
 
         print("\n--- 3. Обогащение через Gemini (AI Transform) ---")
+        cleaned_books = []
         for book in test_sample:
             print(f"Отправка в ИИ сырых данных: {book}")
             clean_book = enrich_with_ai(book)
-            print(f"Результат от ИИ: {clean_book}\n")
+            if clean_book:
+                cleaned_books.append(clean_book)
+                print(f"Результат от ИИ: {clean_book}\n")
+            else:
+                print("Пропуск: не удалось получить данные от ИИ.\n")
 
             # Пауза между запросами к ИИ для соблюдения лимитов
             time.sleep(2)
+
+        print("\n--- 4. Сохранение данных (Load) ---")
+        save_to_csv(cleaned_books, filename="books_dataset.csv")
