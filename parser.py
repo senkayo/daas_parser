@@ -57,7 +57,7 @@ def get_html(url):
 def extract_books_data(html):
     parsed_data = []
 
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, "lxml")
 
     books = soup.find_all("article", class_="product_pod")
     for book in books:
